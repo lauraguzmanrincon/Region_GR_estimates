@@ -71,7 +71,7 @@ for(i in 1:length(ltlaInRegion)){
   tryCatch({
     cat("\nModel for ", ltlaInRegion[i], ":\n", sep = "")
     countTable <- counTable_region[LTLA_code == ltlaInRegion[i] & date >= minDateModel & date <= maxDateModel, .(date, positiveResults, numberTest)]
-    (outputSimulation <- runModelGrowthRate(countTable = countTable, parametersModel = parametersModel, saveSamples = T, minDate = minDateModel, maxDate = maxDateModel))
+    suppressWarnings(outputSimulation <- runModelGrowthRate(countTable = countTable, parametersModel = parametersModel, saveSamples = T, minDate = minDateModel, maxDate = maxDateModel))
     cubeSampleGP[,i,] <- outputSimulation$matrixSampleDays
     cubeSampleDerivatives[,i,] <- outputSimulation$sampleDerivatives
   }, error = function(e) {
