@@ -53,6 +53,12 @@ daysToModel <- 121
 minDateModel <- lastDateAvailable - daysToModel + 1
 maxDateModel <- lastDateAvailable
 
+counTable_region_allDays <- CJ(date = seq(minDateModel, maxDateModel, "day"), LTLA_code = ltlaInRegion)
+setkeyv(counTable_region_allDays, c("date", "LTLA_code"))
+setkeyv(counTable_region, c("date", "LTLA_code"))
+counTable_region_allDays[counTable_region, ":="(LTLA_name = i.LTLA_name, positiveResults = i.positiveResults, numberTest = i.numberTest)]
+counTable_region_allDays[is.na(positiveResults), positiveResults := 0]
+
 parametersModel <- setParametersFn(linkType = ifelse(typeModel == "GaussianProcessProp", "BB", "NB"),
                                    prior2.sigma0 = ifelse(typeModel == "GaussianProcessProp", 2.26, 5.97),
                                    prior2.lengthscale0 = ifelse(typeModel == "GaussianProcessProp", 59.34, 120.97),
@@ -70,7 +76,7 @@ removeLTLA <- rep(1, length(ltlaInRegion))
 for(i in 1:length(ltlaInRegion)){
   tryCatch({
     cat("\nModel for ", ltlaInRegion[i], ":\n", sep = "")
-    countTable <- counTable_region[LTLA_code == ltlaInRegion[i] & date >= minDateModel & date <= maxDateModel, .(date, positiveResults, numberTest)]
+    countTable <- counTable_region_allDays[LTLA_code == ltlaInRegion[i] & date >= minDateModel & date <= maxDateModel, .(date, positiveResults, numberTest)]
     suppressWarnings(outputSimulation <- runModelGrowthRate(countTable = countTable, parametersModel = parametersModel, saveSamples = T, minDate = minDateModel, maxDate = maxDateModel))
     cubeSampleGP[,i,] <- outputSimulation$matrixSampleDays
     cubeSampleDerivatives[,i,] <- outputSimulation$sampleDerivatives
@@ -90,8 +96,8 @@ if(parametersModel$params$linkType == "BB"){
 
 INC_P <- 0.4162
 GAMMA <- 0.7309
-tttNum <- (weigthMatrix[,removeLTLA,]*cubeSampleDerivatives[,removeLTLA,])
-tttDen <- weigthMatrix[,removeLTLA,]
+tttNum <- (weigthMatrix[,removeLTLA == 1,]*cubeSampleDerivatives[,removeLTLA == 1,])
+tttDen <- weigthMatrix[,removeLTLA == 1,]
 
 samples_rR <- apply(tttNum, c(1,3), sum)/apply(tttDen, c(1,3), sum)
 samples_RR <- ( (1+samples_rR/(3*INC_P))^3 )*(1+samples_rR/GAMMA)
