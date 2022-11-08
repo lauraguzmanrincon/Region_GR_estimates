@@ -6,6 +6,7 @@
 library(data.table)
 library(INLA)
 library(ggplot2)
+library(dplyr)
 
 source("functions.R")
 
@@ -14,26 +15,38 @@ source("functions.R")
 
 # -------------------------------- #
 # Example Scotland
-load("Datasets/Scotland_councilAreas.RData", verbose = T)
-load("Datasets/Scotland_exampleData.RData", verbose = T)
-
-typeModel <- "GaussianProcessRaw" # Choose "GaussianProcessRaw" or "GaussianProcessProp"
-lastDateAvailable <- as.Date("2022-09-11")
-regionToModel <- "Scotland"
-ltlaInRegion <- areasScotland[order(Code), Code]
-populationInRegion <- areasScotland[order(Code), population_estim]
+# load("Datasets/Scotland_councilAreas.RData", verbose = T)
+# load("Datasets/Scotland_exampleData.RData", verbose = T)
+# 
+# typeModel <- "GaussianProcessRaw" # Choose "GaussianProcessRaw" or "GaussianProcessProp"
+# lastDateAvailable <- as.Date("2022-09-11")
+# regionToModel <- "Scotland"
+# ltlaInRegion <- areasScotland[order(Code), Code]
+# populationInRegion <- areasScotland[order(Code), population_estim]
 # -------------------------------- #
 
 # -------------------------------- #
 # Example Midlands
-#load("Datasets/England_LTLA_NHSER.RData", verbose = T)
+load("Datasets/England_LTLA_NHSER.RData", verbose = T)
 #load("Datasets/England_exampleData.RData", verbose = T)
 
-#typeModel <- "GaussianProcessRaw" # Choose "GaussianProcessRaw" or "GaussianProcessProp"
-#lastDateAvailable <- as.Date("2022-09-22")
-#regionToModel <- "Midlands"
-#ltlaInRegion <- LTLAtoNHSER[NHSER_name == "Midlands"][order(LTLA_code), LTLA_code]
-#populationInRegion <- ltlaToNHSER[NHSER_name == "Midlands"][order(LTLA_code), population_estim]
+typeModel <- "GaussianProcessRaw" # Choose "GaussianProcessRaw" or "GaussianProcessProp"
+regionToModel <- "Midlands"
+
+########################## SFTP data 
+
+source <- "sftp"
+
+ltlaInRegion <- ltlaToNHSER[NHSER_name == regionToModel][order(LTLA_code), LTLA_code]
+populationInRegion <- ltlaToNHSER[NHSER_name == regionToModel][order(LTLA_code), combinedPop_allAges]
+region_cases <- read.csv("pcr_pillar1_cases.csv") %>% dplyr::filter(LTLA_code %in% ltlaInRegion)
+region_df <- region_cases %>% select(date = specimen_date, LTLA_code, LTLA_name, positiveResults = cases) %>% mutate(date = as.Date(date, format = "%d/%m/%Y"))
+region_df <- region_df %>% mutate(numberTest = NA)
+region_table <- data.table(region_df)
+counTable_region <- region_table
+lastDateAvailable <- max(counTable_region$date) - 3
+
+
 # -------------------------------- #
 
 # -------------------------------- #
@@ -80,7 +93,9 @@ for(i in 1:length(ltlaInRegion)){
     suppressWarnings(outputSimulation <- runModelGrowthRate(countTable = countTable, parametersModel = parametersModel, saveSamples = T, minDate = minDateModel, maxDate = maxDateModel))
     cubeSampleGP[,i,] <- outputSimulation$matrixSampleDays
     cubeSampleDerivatives[,i,] <- outputSimulation$sampleDerivatives
+    if(mean(apply(outputSimulation$sampleDerivatives, 2, sd), na.rm = T) > 0.5) removeLTLA[i] <- 0
   }, error = function(e) {
+    print(e)
     removeLTLA[i] <<- 0
     })
 }
@@ -201,6 +216,7 @@ tableEstimates <- rbind(table_r, table_R)
 
 ## ---- Output ----
 print(tableEstimates)
+write.csv(tableSamples_rR, here::here(paste0(source, "_", regionToModel, '_estimates_', typeModel,'.csv')), row.names = F)
 ggplot(tableEstimates, aes(x = as.Date(paste0(`Day of Value`, `Month of Value`, `Year of Value`), format = "%d%m%Y"), y = Value)) + theme_minimal() +
   facet_grid(ValueType ~ ., scales = "free_y") +
   geom_hline(data = data.table(ValueType = c("growth_rate", "R"), yi = 0:1), aes(yintercept = yi), linetype = 2, colour = "gray20") +
@@ -208,5 +224,27 @@ ggplot(tableEstimates, aes(x = as.Date(paste0(`Day of Value`, `Month of Value`, 
   geom_path() +
   #scale_x_date(labels = scales::label_date(formatBreaks), breaks = dateBreaks, expand = c(0,0)) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
-        panel.grid.major = element_line(linetype = 2, colour = "gray90")) +
-  labs(x = "day", y = "median (90% CI)")
+        panel.grid.major = element_line(linetype = 2, colour = "gray90"), plot.title = element_text(hjust = 0.5)) +
+  labs(x = "day", y = "median (90% CI)") + ggtitle(paste0("Estimates derived from ", source," data for ", regionToModel, ",\n", gsub("GaussianProcess", "", typeModel), " Model"))
+
+
+create_date_column <- function(data){
+  data <- data %>% mutate(Month.of.Value = if_else(nchar(Month.of.Value) == 1, paste0("0", Month.of.Value), as.character(Month.of.Value)))
+  data <- data %>% mutate(Day.of.Value = if_else(nchar(Day.of.Value) == 1, paste0("0", Day.of.Value), as.character(Day.of.Value)))
+  data <- data %>% tidyr::unite(col = "date", c(`Day.of.Value`, `Month.of.Value`, `Year.of.Value`), sep = "-") %>% mutate(date = as.Date(date, format = "%d-%m-%Y"))
+  return(data)
+}
+
+#### Plotting submitted estimates
+official_estimates <- read.csv("submitted_estimates/R43_20220927_GrowthRates_R_DataScot20220926.csv")
+official_estimates <- create_date_column(official_estimates)
+ggplot(official_estimates %>% dplyr::filter(Geography == regionToModel, Model == "GaussianProcessesRaw"), aes(x = date, y = Value)) + theme_minimal() +
+  facet_grid(ValueType ~ ., scales = "free_y") +
+  geom_hline(data = data.table(ValueType = c("growth_rate", "R"), yi = 0:1), aes(yintercept = yi), linetype = 2, colour = "gray20") +
+  geom_ribbon(aes(ymin = `Quantile.0.05`, ymax = `Quantile.0.95`), colour = NA, fill = "gray70", alpha = 0.2) +
+  geom_path() +
+  #scale_x_date(labels = scales::label_date(formatBreaks), breaks = dateBreaks, expand = c(0,0)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1),
+        panel.grid.major = element_line(linetype = 2, colour = "gray90"), plot.title = element_text(hjust = 0.5)) +
+  labs(x = "day", y = "median (90% CI)") + ggtitle(paste0("Estimates submitted to the EMRG for ", regionToModel, ",\n", gsub("GaussianProcess", "", typeModel), " Model"))
+
